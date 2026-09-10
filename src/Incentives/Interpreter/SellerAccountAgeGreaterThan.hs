@@ -2,10 +2,9 @@ module Incentives.Interpreter.SellerAccountAgeGreaterThan where
 
 import Incentives.Interpreter (Interpreter (..))
 import Incentives.CheckoutSummary (Days)
-import Incentives.Match (Match, match)
-import Incentives.Rule (LineRule (SellerAccountAgeGreaterThan))
+import Incentives.Eligibility (Eligibility, fromBool)
 
 -- | Context is the seller's calculated age in days; input is the exclusive bound.
-sellerAccountAgeGreaterThan :: Applicative m => Interpreter m Days Days (Match (LineRule, Days))
+sellerAccountAgeGreaterThan :: Applicative m => Interpreter m Days Days Eligibility
 sellerAccountAgeGreaterThan = Interpreter $ \observed threshold ->
-  pure (match (observed > threshold) (SellerAccountAgeGreaterThan threshold, observed))
+  pure (fromBool (observed > threshold))

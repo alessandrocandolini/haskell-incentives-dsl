@@ -2,10 +2,9 @@ module Incentives.Interpreter.PriceLessThan where
 
 import Incentives.CheckoutSummary (Price)
 import Incentives.Interpreter (Interpreter (..))
-import Incentives.Match (Match, match)
-import Incentives.Rule (LineRule (PriceLessThan))
+import Incentives.Eligibility (Eligibility, fromBool)
 
 -- | Context is the current price; input is the exclusive upper bound.
-priceLessThan :: Applicative m => Interpreter m Price Price (Match (LineRule, Price))
+priceLessThan :: Applicative m => Interpreter m Price Price Eligibility
 priceLessThan = Interpreter $ \observed threshold ->
-  pure (match (observed < threshold) (PriceLessThan threshold, observed))
+  pure (fromBool (observed < threshold))

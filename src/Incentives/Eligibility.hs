@@ -6,6 +6,10 @@ import Incentives.Ast (Ast, AstF (..))
 data Eligibility = Eligible | NotEligible
   deriving (Eq, Ord, Show, Enum, Bounded)
 
+fromBool :: Bool -> Eligibility
+fromBool True = Eligible
+fromBool False = NotEligible
+
 evaluate :: Ast Eligibility -> Eligibility
 evaluate = cata eligibilityAlgebra
 

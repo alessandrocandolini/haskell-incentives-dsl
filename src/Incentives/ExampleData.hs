@@ -16,6 +16,11 @@ expensivePrice = amount 20
 priceThreshold = amount 10
 shippingCost = amount 5
 
+bookLineId, electronicsLineId, clothingLineId :: LineId
+bookLineId = LineId "line-1"
+electronicsLineId = LineId "line-2"
+clothingLineId = LineId "line-3"
+
 bookId, electronicsId, clothingId :: ProductId
 bookId = ProductId "1234"
 electronicsId = ProductId "5678"
@@ -36,9 +41,9 @@ campaignStartsAt = UTCTime (fromGregorian 2026 9 1) 0
 campaignEndsAt = UTCTime (fromGregorian 2026 10 1) 0
 
 bookLine, electronicsLine, clothingLine :: Line
-bookLine = Line bookId establishedSellerId cheapPrice originalBookPrice
-electronicsLine = Line electronicsId establishedSellerId expensivePrice expensivePrice
-clothingLine = Line clothingId recentSellerId cheapPrice cheapPrice
+bookLine = Line bookLineId bookId establishedSellerId cheapPrice originalBookPrice
+electronicsLine = Line electronicsLineId electronicsId establishedSellerId expensivePrice expensivePrice
+clothingLine = Line clothingLineId clothingId recentSellerId cheapPrice cheapPrice
 
 exampleShipping :: ShippingSummary
 exampleShipping = ShippingSummary USPS shippingCost

@@ -4,6 +4,8 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
 import Numeric.Natural (Natural)
 
+newtype LineId = LineId Text deriving (Eq, Ord, Show)
+
 newtype ProductId = ProductId Text deriving (Eq, Ord, Show)
 
 newtype UserId = UserId Text deriving (Eq, Ord, Show)
@@ -40,7 +42,8 @@ data ShippingSummary = ShippingSummary
   deriving (Eq, Show)
 
 data Line = Line
-  { productId :: ProductId
+  { lineId :: LineId
+  , productId :: ProductId
   , sellerId :: UserId
   , currentPrice :: Price
   , originalPrice :: Price

@@ -13,7 +13,6 @@ import Incentives.Interpreter.ProductCategoryIs
 import Incentives.Interpreter.SellerAccountAgeGreaterThan
 import Incentives.Interpreter.ShippingProviderIs
 import Incentives.Match
-import Incentives.Rule
 import Test.Hspec
 
 spec :: Spec
@@ -21,59 +20,59 @@ spec = do
   describe "priceLessThan" $ do
     it "compares the supplied current price" $
       runIdentity (evaluate priceLessThan (currentPrice bookLine) priceThreshold)
-        `shouldBe` Hit (PriceLessThan priceThreshold, cheapPrice)
+        `shouldBe` Eligible
     it "misses at the threshold" $
       runIdentity (evaluate priceLessThan cheapPrice cheapPrice)
-        `shouldBe` Miss (PriceLessThan cheapPrice, cheapPrice)
+        `shouldBe` NotEligible
     it "misses above the threshold" $
       runIdentity (evaluate priceLessThan expensivePrice priceThreshold)
-        `shouldBe` Miss (PriceLessThan priceThreshold, expensivePrice)
+        `shouldBe` NotEligible
 
   describe "currencyIs" $ do
     it "hits for the observed currency" $
       runIdentity (evaluate currencyIs (currency exampleCheckout) USD)
-        `shouldBe` Hit (CurrencyIs USD, USD)
-    it "retains expected and observed currencies on a miss" $
+        `shouldBe` Eligible
+    it "rejects a different currency" $
       runIdentity (evaluate currencyIs (currency exampleCheckout) GBP)
-        `shouldBe` Miss (CurrencyIs GBP, USD)
+        `shouldBe` NotEligible
 
   describe "shippingProviderIs" $ do
     it "hits for the observed provider" $
       runIdentity (evaluate shippingProviderIs (shippingProvider exampleShipping) USPS)
-        `shouldBe` Hit (ShippingProviderIs USPS, USPS)
-    it "retains expected and observed providers on a miss" $
+        `shouldBe` Eligible
+    it "rejects a different provider" $
       runIdentity (evaluate shippingProviderIs (shippingProvider exampleShipping) UPS)
-        `shouldBe` Miss (ShippingProviderIs UPS, USPS)
+        `shouldBe` NotEligible
 
   describe "productCategoryIs" $ do
     it "hits for the category from product details" $
       runIdentity (evaluate productCategoryIs (ProductDetails.category bookDetails) "books")
-        `shouldBe` Hit (ProductCategoryIs "books", "books")
+        `shouldBe` Eligible
     it "misses a different category" $
       runIdentity (evaluate productCategoryIs (ProductDetails.category electronicsDetails) "books")
-        `shouldBe` Miss (ProductCategoryIs "books", "electronics")
+        `shouldBe` NotEligible
 
   describe "buyerAccountAgeGreaterThan" $ do
     it "hits above the threshold" $
       runIdentity (evaluate buyerAccountAgeGreaterThan establishedAccountAge (days 365))
-        `shouldBe` Hit (BuyerAccountAgeGreaterThan (days 365), establishedAccountAge)
+        `shouldBe` Eligible
     it "misses at the threshold" $
       runIdentity (evaluate buyerAccountAgeGreaterThan (days 365) (days 365))
-        `shouldBe` Miss (BuyerAccountAgeGreaterThan (days 365), days 365)
+        `shouldBe` NotEligible
     it "misses below the threshold" $
       runIdentity (evaluate buyerAccountAgeGreaterThan recentAccountAge (days 365))
-        `shouldBe` Miss (BuyerAccountAgeGreaterThan (days 365), recentAccountAge)
+        `shouldBe` NotEligible
 
   describe "sellerAccountAgeGreaterThan" $ do
     it "hits above the threshold" $
       runIdentity (evaluate sellerAccountAgeGreaterThan establishedAccountAge (days 30))
-        `shouldBe` Hit (SellerAccountAgeGreaterThan (days 30), establishedAccountAge)
+        `shouldBe` Eligible
     it "misses at the threshold" $
       runIdentity (evaluate sellerAccountAgeGreaterThan (days 30) (days 30))
-        `shouldBe` Miss (SellerAccountAgeGreaterThan (days 30), days 30)
+        `shouldBe` NotEligible
     it "misses below the threshold" $
       runIdentity (evaluate sellerAccountAgeGreaterThan recentAccountAge (days 30))
-        `shouldBe` Miss (SellerAccountAgeGreaterThan (days 30), recentAccountAge)
+        `shouldBe` NotEligible
 
   describe "Match projection" $ do
     it "projects a hit to Eligible" $
@@ -84,19 +83,19 @@ spec = do
       fmap show (Miss (42 :: Int)) `shouldBe` Miss "42"
 
   describe "Interpreter output mapping" $ do
-    it "projects a rule interpreter to eligibility" $
-      runIdentity (evaluate (fmap eligibilityOf priceLessThan) cheapPrice priceThreshold)
-        `shouldBe` Eligible
-    it "preserves a miss through projection" $
-      runIdentity (evaluate (fmap eligibilityOf priceLessThan) cheapPrice cheapPrice)
-        `shouldBe` NotEligible
+    it "maps an eligible result" $
+      runIdentity (evaluate (fmap (== Eligible) priceLessThan) cheapPrice priceThreshold)
+        `shouldBe` True
+    it "maps an ineligible result" $
+      runIdentity (evaluate (fmap (== Eligible) priceLessThan) cheapPrice cheapPrice)
+        `shouldBe` False
     it "satisfies functor identity for a rule interpreter" $
       runIdentity (evaluate (fmap id currencyIs) USD USD)
-        `shouldBe` Hit (CurrencyIs USD, USD)
+        `shouldBe` Eligible
     it "satisfies functor composition for a rule interpreter" $ do
-      let interpreter = currencyIs :: Interpreter Identity Currency Currency (Match (PurchaseRule, Currency))
-      runIdentity (evaluate (fmap (show . eligibilityOf) interpreter) USD USD)
-        `shouldBe` runIdentity (evaluate (fmap show (fmap eligibilityOf interpreter)) USD USD)
+      let interpreter = currencyIs :: Interpreter Identity Currency Currency Eligibility
+      runIdentity (evaluate (fmap (show . (== Eligible)) interpreter) USD USD)
+        `shouldBe` runIdentity (evaluate (fmap show (fmap (== Eligible) interpreter)) USD USD)
     it "preserves effects while mapping the output" $ do
       let interpreter :: Interpreter ((,) [Currency]) Currency Currency (Match ())
           interpreter = Interpreter $ \observed expected ->
