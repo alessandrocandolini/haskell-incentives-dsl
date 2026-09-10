@@ -1,0 +1,72 @@
+name:                haskell-incentives-dsl
+version:             0.1.0.0
+description:         "haskell-incentives-dsl"
+
+dependencies:
+- base >= 4.7 && < 5
+- text
+- containers
+- nonempty-containers
+- async
+- stm
+- uuid
+- optparse-applicative
+- aeson
+- aeson-pretty
+- safe
+- either
+- megaparsec
+- witherable
+- ansi-terminal
+- envparse
+- neat-interpolation
+- recursion-schemes
+- free
+- comonad
+- data-fix
+- selective
+
+default-extensions:
+- OverloadedStrings
+
+ghc-options:
+  - -Wall
+  - -Werror=incomplete-patterns
+  - -Werror=incomplete-uni-patterns
+  - -Wincomplete-record-updates
+  - -Wredundant-constraints
+  - -Wunused-packages
+  - -O2
+
+library:
+  source-dirs: src
+
+executables:
+  haskell-incentives-dsl:
+    main:                Main.hs
+    source-dirs:         app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - haskell-incentives-dsl
+
+tests:
+  haskell-incentives-dsl-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    - -O0 # No optimization for faster test runs
+    dependencies:
+    - haskell-incentives-dsl
+    - hspec
+    - QuickCheck
+    build-tools:
+    - hspec-discover
+
+verbatim:
+  cabal-version: 3.0

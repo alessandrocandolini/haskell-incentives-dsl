@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "haskell-incentives-dsl:lib"
+
+    - path: "./app"
+      component: "haskell-incentives-dsl:exe:haskell-incentives-dsl"
+
+    - path: "./test"
+      component: "haskell-incentives-dsl:test:haskell-incentives-dsl-test"
