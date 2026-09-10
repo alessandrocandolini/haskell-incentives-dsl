@@ -7,6 +7,7 @@
 
 module Incentives.Campaign where
 
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Incentives.Ast (Ast)
@@ -29,9 +30,9 @@ data Incentive target
   | Reduce target Discount
   deriving (Eq, Show)
 
--- Composition preserves order and duplicates, with no binary grouping nodes.
-newtype Offering (target :: Target) = Offering [OfferingNode target]
-  deriving (Eq, Show, Semigroup, Monoid)
+-- Every finite body contains a grant; composition preserves order and duplicates.
+newtype Offering (target :: Target) = Offering (NonEmpty (OfferingNode target))
+  deriving (Eq, Show, Semigroup)
 
 data OfferingNode (target :: Target) where
   GrantLine :: Incentive LineIncentiveTarget -> OfferingNode 'Line
@@ -48,17 +49,17 @@ class IsIncentiveTarget target where
 
 instance IsIncentiveTarget LineIncentiveTarget where
   type TargetOf LineIncentiveTarget = 'Line
-  grant incentive = Offering [GrantLine incentive]
+  grant incentive = Offering (GrantLine incentive :| [])
 
 instance IsIncentiveTarget PurchaseIncentiveTarget where
   type TargetOf PurchaseIncentiveTarget = 'Purchase
-  grant incentive = Offering [GrantPurchase incentive]
+  grant incentive = Offering (GrantPurchase incentive :| [])
 
 when :: Ast (Rule target) -> Offering target -> Offering target
-when condition body = Offering [When condition body]
+when condition body = Offering (When condition body :| [])
 
 forEachLine :: Offering 'Line -> Offering 'Purchase
-forEachLine body = Offering [ForEachLine body]
+forEachLine body = Offering (ForEachLine body :| [])
 
 data Campaign = Campaign
   { campaignId :: CampaignId
