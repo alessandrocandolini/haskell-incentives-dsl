@@ -7,15 +7,9 @@ module Incentives.Rule where
 
 import Data.Text (Text)
 import Incentives.Ast (Ast (Pure))
-import Incentives.CheckoutSummary (Currency, Price, ShippingProvider)
-import Numeric.Natural (Natural)
+import Incentives.CheckoutSummary (Currency, Days, Price, ShippingProvider)
 
-data Scope = LineScope | PurchaseScope
-
-newtype Days = Days Natural deriving (Eq, Ord, Show)
-
-days :: Natural -> Days
-days = Days
+data Target = Line | Purchase
 
 data LineRule
   = PriceLessThan Price
@@ -29,24 +23,24 @@ data PurchaseRule
   | BuyerAccountAgeGreaterThan Days
   deriving (Eq, Show)
 
--- Purchase facts are available in either scope. Line facts require a line.
-data Rule (scope :: Scope) where
-  Line :: LineRule -> Rule 'LineScope
-  Purchase :: PurchaseRule -> Rule scope
-  AnyLine :: Ast (Rule 'LineScope) -> Rule 'PurchaseScope
-  EveryLine :: Ast (Rule 'LineScope) -> Rule 'PurchaseScope
+-- Purchase facts are available in either target. Line facts require a line.
+data Rule (target :: Target) where
+  LineRule :: LineRule -> Rule 'Line
+  PurchaseRule :: PurchaseRule -> Rule target
+  AnyLine :: Ast (Rule 'Line) -> Rule 'Purchase
+  EveryLine :: Ast (Rule 'Line) -> Rule 'Purchase
 
-deriving instance Eq (Rule scope)
-deriving instance Show (Rule scope)
+deriving instance Eq (Rule target)
+deriving instance Show (Rule target)
 
-line :: LineRule -> Ast (Rule 'LineScope)
-line = Pure . Line
+line :: LineRule -> Ast (Rule 'Line)
+line = Pure . LineRule
 
-purchase :: PurchaseRule -> Ast (Rule scope)
-purchase = Pure . Purchase
+purchase :: PurchaseRule -> Ast (Rule target)
+purchase = Pure . PurchaseRule
 
-anyLine :: Ast (Rule 'LineScope) -> Ast (Rule 'PurchaseScope)
+anyLine :: Ast (Rule 'Line) -> Ast (Rule 'Purchase)
 anyLine = Pure . AnyLine
 
-everyLine :: Ast (Rule 'LineScope) -> Ast (Rule 'PurchaseScope)
+everyLine :: Ast (Rule 'Line) -> Ast (Rule 'Purchase)
 everyLine = Pure . EveryLine

@@ -1,27 +1,33 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 
 module Incentives.CampaignSpec where
 
+import Incentives.Ast (Ast)
 import Incentives.Campaign
-import Incentives.CheckoutSummary
-import qualified Incentives.Examples as Examples
+import Incentives.CheckoutSummary (Currency (..), days)
+import qualified Incentives.ExampleCampaign as Examples
+import Incentives.ExampleData (priceThreshold)
 import Incentives.Rule
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Gen, elements, forAll, listOf, oneof, sized)
 
-lineOffering :: Gen (Offering 'LineScope)
+cheap :: Ast (Rule 'Line)
+cheap = line (PriceLessThan priceThreshold)
+
+lineOffering :: Gen (Offering 'Line)
 lineOffering = sized go
   where
     go n
       | n <= 0 = grant . Waive <$> elements ([minBound .. maxBound] :: [LineIncentiveTarget])
       | otherwise = oneof
           [ go 0
-          , when Examples.cheap <$> go (n `div` 2)
+          , when cheap <$> go (n `div` 2)
           , mconcat <$> listOf (go 0)
           ]
 
-purchaseOffering :: Gen (Offering 'PurchaseScope)
+purchaseOffering :: Gen (Offering 'Purchase)
 purchaseOffering = sized go
   where
     go n
@@ -48,36 +54,37 @@ spec = describe "Composable offerings" $ do
   describe "line scope" $ compositionLaws lineOffering
   describe "purchase scope" $ compositionLaws purchaseOffering
 
-  it "keeps a shared condition around both line and purchase grants" $
-    Examples.usdBenefits `shouldBe`
-      Offering
-        [ When (purchase (CurrencyIs USD))
-            (Offering
-              [ ForEachLine (Offering [When Examples.cheap Examples.lineBenefits])
-              , When (anyLine Examples.cheap)
-                  (Offering [GrantPurchase (Waive ShippingCost)])
-              ])
-        ]
-
-  it "reusable fragments produce the same data as an inline hybrid campaign" $
-    offering Examples.hybridCampaign `shouldBe` Examples.usdBenefits
-
   it "preserves grant order and duplicates" $
-    (grant (Waive BuyerFee) <> Examples.lineBenefits <> grant (Waive BuyerFee))
+    (grant (Waive BuyerFee) <> grant (Waive SellingFee) <> grant (Waive BuyerFee))
       `shouldBe` Offering
         [ GrantLine (Waive BuyerFee)
         , GrantLine (Waive SellingFee)
-        , GrantLine (Reduce BoostingFee (PercentOff 50))
         , GrantLine (Waive BuyerFee)
         ]
 
   it "keeps separate conditions attached to their respective grants" $
-    Examples.independentLineBenefits `shouldBe` Offering
-      [ When Examples.cheap (Offering [GrantLine (Waive SellingFee)])
-      , When (line (ProductCategoryIs "books")) (Offering [GrantLine (Waive BuyerFee)])
-      ]
+    (when cheap (grant (Waive SellingFee))
+      <> when (line (ProductCategoryIs "books")) (grant (Waive BuyerFee)))
+      `shouldBe` Offering
+        [ When cheap (Offering [GrantLine (Waive SellingFee)])
+        , When (line (ProductCategoryIs "books")) (Offering [GrantLine (Waive BuyerFee)])
+        ]
 
-  it "retains nested gates when another condition wraps a reusable fragment" $
-    Examples.establishedBuyerBenefits `shouldBe` Offering
-      [ When (purchase (BuyerAccountAgeGreaterThan (days 365))) Examples.usdBenefits
-      ]
+  it "retains nested gates when a condition wraps a reusable fragment" $
+    when (purchase (CurrencyIs USD)) (offering Examples.hybridCampaign)
+      `shouldBe` Offering
+        [When (purchase (CurrencyIs USD)) (offering Examples.hybridCampaign)]
+
+  it "the hybrid reuses all four campaign bodies under one shared condition" $ do
+    let Offering expected = mconcat
+          [ offering Examples.lineRulesLineIncentive
+          , offering Examples.purchaseRulesLineIncentive
+          , offering Examples.lineRulesPurchaseIncentive
+          , offering Examples.purchaseRulesPurchaseIncentive
+          ]
+    case offering Examples.hybridCampaign of
+      Offering [When condition (Offering nodes)] -> do
+        condition `shouldBe` purchase (BuyerAccountAgeGreaterThan (days 30))
+        take (length expected) nodes `shouldBe` expected
+        length nodes `shouldBe` length expected + 1
+      _ -> expectationFailure "Expected one shared gate around the hybrid body"

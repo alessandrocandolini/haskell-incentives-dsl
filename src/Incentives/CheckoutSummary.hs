@@ -2,12 +2,18 @@ module Incentives.CheckoutSummary where
 
 import Data.List.NonEmpty (NonEmpty)
 import Data.Text (Text)
+import Numeric.Natural (Natural)
 
 newtype ProductId = ProductId Text deriving (Eq, Ord, Show)
 
 newtype UserId = UserId Text deriving (Eq, Ord, Show)
 
 data Currency = USD | GBP | EUR deriving (Eq, Ord, Show)
+
+newtype Days = Days Natural deriving (Eq, Ord, Show)
+
+days :: Natural -> Days
+days = Days
 
 -- Exact amounts in the checkout currency's major units.
 newtype Price = Price Rational deriving (Eq, Ord, Show)
@@ -33,7 +39,7 @@ data ShippingSummary = ShippingSummary
   }
   deriving (Eq, Show)
 
-data Product = Product
+data Line = Line
   { productId :: ProductId
   , sellerId :: UserId
   , currentPrice :: Price
@@ -45,6 +51,6 @@ data CheckoutSummary = CheckoutSummary
   { currency :: Currency
   , buyerId :: UserId
   , shipping :: ShippingSummary
-  , products :: NonEmpty Product
+  , lines :: NonEmpty Line
   }
   deriving (Eq, Show)

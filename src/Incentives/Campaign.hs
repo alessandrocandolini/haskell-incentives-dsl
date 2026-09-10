@@ -11,7 +11,7 @@ import Data.Text (Text)
 import Data.Time (UTCTime)
 import Incentives.Ast (Ast)
 import Incentives.CheckoutSummary (Price)
-import Incentives.Rule (Rule, Scope (..))
+import Incentives.Rule (Rule, Target (..))
 
 newtype CampaignId = CampaignId Text deriving (Eq, Ord, Show)
 
@@ -30,40 +30,40 @@ data Incentive target
   deriving (Eq, Show)
 
 -- Composition preserves order and duplicates, with no binary grouping nodes.
-newtype Offering (scope :: Scope) = Offering [OfferingNode scope]
+newtype Offering (target :: Target) = Offering [OfferingNode target]
   deriving (Eq, Show, Semigroup, Monoid)
 
-data OfferingNode (scope :: Scope) where
-  GrantLine :: Incentive LineIncentiveTarget -> OfferingNode 'LineScope
-  GrantPurchase :: Incentive PurchaseIncentiveTarget -> OfferingNode 'PurchaseScope
-  When :: Ast (Rule scope) -> Offering scope -> OfferingNode scope
-  ForEachLine :: Offering 'LineScope -> OfferingNode 'PurchaseScope
+data OfferingNode (target :: Target) where
+  GrantLine :: Incentive LineIncentiveTarget -> OfferingNode 'Line
+  GrantPurchase :: Incentive PurchaseIncentiveTarget -> OfferingNode 'Purchase
+  When :: Ast (Rule target) -> Offering target -> OfferingNode target
+  ForEachLine :: Offering 'Line -> OfferingNode 'Purchase
 
-deriving instance Eq (OfferingNode scope)
-deriving instance Show (OfferingNode scope)
+deriving instance Eq (OfferingNode target)
+deriving instance Show (OfferingNode target)
 
 class IsIncentiveTarget target where
-  type TargetScope target :: Scope
-  grant :: Incentive target -> Offering (TargetScope target)
+  type TargetOf target :: Target
+  grant :: Incentive target -> Offering (TargetOf target)
 
 instance IsIncentiveTarget LineIncentiveTarget where
-  type TargetScope LineIncentiveTarget = 'LineScope
+  type TargetOf LineIncentiveTarget = 'Line
   grant incentive = Offering [GrantLine incentive]
 
 instance IsIncentiveTarget PurchaseIncentiveTarget where
-  type TargetScope PurchaseIncentiveTarget = 'PurchaseScope
+  type TargetOf PurchaseIncentiveTarget = 'Purchase
   grant incentive = Offering [GrantPurchase incentive]
 
-when :: Ast (Rule scope) -> Offering scope -> Offering scope
+when :: Ast (Rule target) -> Offering target -> Offering target
 when condition body = Offering [When condition body]
 
-forEachLine :: Offering 'LineScope -> Offering 'PurchaseScope
+forEachLine :: Offering 'Line -> Offering 'Purchase
 forEachLine body = Offering [ForEachLine body]
 
 data Campaign = Campaign
   { campaignId :: CampaignId
   , startsAt :: UTCTime
   , endsAt :: UTCTime
-  , offering :: Offering 'PurchaseScope
+  , offering :: Offering 'Purchase
   }
   deriving (Eq, Show)
