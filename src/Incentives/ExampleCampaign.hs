@@ -2,7 +2,7 @@
 
 module Incentives.ExampleCampaign where
 
-import Incentives.Ast
+import Incentives.EligibilityExpr
 import Incentives.Campaign
 import Incentives.CheckoutSummary (Currency (..), ShippingProvider (..), days)
 import Incentives.ExampleData (campaignEndsAt, campaignStartsAt, priceThreshold)
@@ -84,4 +84,13 @@ hybridCampaign = Campaign
           (when
             (line (ProductCategoryIs "books") .&&. purchase (CurrencyIs USD))
             (grant (Waive BoostingFee) <> grant (Reduce SellingFee (PercentOff 25))))
+  }
+
+-- F: a derived purchase rule governs free shipping.
+bundleShippingIncentive :: Campaign
+bundleShippingIncentive = Campaign
+  { campaignId = CampaignId "bundle-shipping-incentive"
+  , startsAt = campaignStartsAt
+  , endsAt = campaignEndsAt
+  , offering = when isBundle (grant (Waive ShippingCost))
   }

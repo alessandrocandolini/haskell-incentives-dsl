@@ -7,7 +7,7 @@ module Incentives.CampaignSpec where
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Semigroup (sconcat)
-import Incentives.Ast (Ast)
+import Incentives.EligibilityExpr (EligibilityExpr)
 import Incentives.Campaign
 import Incentives.CheckoutSummary (Currency (..), days)
 import qualified Incentives.ExampleCampaign as Examples
@@ -17,7 +17,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Gen, elements, forAll, listOf, oneof, sized)
 
-cheap :: Ast (Rule 'Line)
+cheap :: EligibilityExpr Rule
 cheap = line (PriceLessThan priceThreshold)
 
 lineOffering :: Gen (Offering 'Line)
@@ -101,11 +101,17 @@ spec = describe "Composable offerings" $ do
         length nodes `shouldBe` length expected + 1
       _ -> expectationFailure "Expected one shared gate around the hybrid body"
 
-  it "all five campaigns retain their grants through conditions and iteration" $
+  it "the bundle campaign gates free shipping on the derived rule" $
+    offering Examples.bundleShippingIncentive
+      `shouldBe` Offering
+        [When (purchase (DistinctSellerCountGreaterThan 1)) (Offering [GrantPurchase (Waive ShippingCost)])]
+
+  it "all six campaigns retain their grants through conditions and iteration" $
     map (grantCount . offering)
       [ Examples.lineRulesLineIncentive
       , Examples.purchaseRulesLineIncentive
       , Examples.lineRulesPurchaseIncentive
       , Examples.purchaseRulesPurchaseIncentive
       , Examples.hybridCampaign
-      ] `shouldBe` [1, 1, 1, 1, 6]
+      , Examples.bundleShippingIncentive
+      ] `shouldBe` [1, 1, 1, 1, 6, 1]

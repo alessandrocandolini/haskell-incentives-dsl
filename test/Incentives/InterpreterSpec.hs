@@ -3,7 +3,7 @@ module Incentives.InterpreterSpec where
 import Data.Functor.Identity (Identity, runIdentity)
 import qualified Incentives.Client.ProductDetails as ProductDetails
 import Incentives.CheckoutSummary
-import Incentives.Eligibility (Eligibility (..))
+import Incentives.Eligibility (Eligibility (..), fromBool)
 import Incentives.ExampleData
 import Incentives.Interpreter (Interpreter (..))
 import Incentives.Interpreter.BuyerAccountAgeGreaterThan
@@ -12,7 +12,6 @@ import Incentives.Interpreter.PriceLessThan
 import Incentives.Interpreter.ProductCategoryIs
 import Incentives.Interpreter.SellerAccountAgeGreaterThan
 import Incentives.Interpreter.ShippingProviderIs
-import Incentives.Match
 import Test.Hspec
 
 spec :: Spec
@@ -74,14 +73,6 @@ spec = do
       runIdentity (evaluate sellerAccountAgeGreaterThan recentAccountAge (days 30))
         `shouldBe` NotEligible
 
-  describe "Match projection" $ do
-    it "projects a hit to Eligible" $
-      eligibilityOf (Hit ()) `shouldBe` Eligible
-    it "projects a miss to NotEligible" $
-      eligibilityOf (Miss ()) `shouldBe` NotEligible
-    it "can change the reason without changing the verdict" $
-      fmap show (Miss (42 :: Int)) `shouldBe` Miss "42"
-
   describe "Interpreter output mapping" $ do
     it "maps an eligible result" $
       runIdentity (evaluate (fmap (== Eligible) priceLessThan) cheapPrice priceThreshold)
@@ -97,8 +88,8 @@ spec = do
       runIdentity (evaluate (fmap (show . (== Eligible)) interpreter) USD USD)
         `shouldBe` runIdentity (evaluate (fmap show (fmap (== Eligible) interpreter)) USD USD)
     it "preserves effects while mapping the output" $ do
-      let interpreter :: Interpreter ((,) [Currency]) Currency Currency (Match ())
+      let interpreter :: Interpreter ((,) [Currency]) Currency Currency Eligibility
           interpreter = Interpreter $ \observed expected ->
-            ([observed], match (observed == expected) ())
-      evaluate (fmap eligibilityOf interpreter) USD GBP
-        `shouldBe` ([USD], NotEligible)
+            ([observed], fromBool (observed == expected))
+      evaluate (fmap (== Eligible) interpreter) USD GBP
+        `shouldBe` ([USD], False)

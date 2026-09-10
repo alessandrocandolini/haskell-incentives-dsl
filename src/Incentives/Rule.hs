@@ -1,12 +1,8 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE StandaloneDeriving #-}
-
 module Incentives.Rule where
 
 import Data.Text (Text)
-import Incentives.Ast (Ast (Pure))
+import Numeric.Natural (Natural)
+import Incentives.EligibilityExpr (EligibilityExpr (Check, AnyLine, EveryLine))
 import Incentives.CheckoutSummary (Currency, Days, Price, ShippingProvider)
 
 data Target = Line | Purchase
@@ -21,26 +17,26 @@ data PurchaseRule
   = CurrencyIs Currency
   | ShippingProviderIs ShippingProvider
   | BuyerAccountAgeGreaterThan Days
+  | DistinctSellerCountGreaterThan Natural
   deriving (Eq, Show)
 
--- Purchase facts are available in either target. Line facts require a line.
-data Rule (target :: Target) where
-  LineRule :: LineRule -> Rule 'Line
-  PurchaseRule :: PurchaseRule -> Rule target
-  AnyLine :: Ast (Rule 'Line) -> Rule 'Purchase
-  EveryLine :: Ast (Rule 'Line) -> Rule 'Purchase
+data Rule
+  = LineRule LineRule
+  | PurchaseRule PurchaseRule
+  deriving (Eq, Show)
 
-deriving instance Eq (Rule target)
-deriving instance Show (Rule target)
+line :: LineRule -> EligibilityExpr Rule
+line = Check . LineRule
 
-line :: LineRule -> Ast (Rule 'Line)
-line = Pure . LineRule
+purchase :: PurchaseRule -> EligibilityExpr Rule
+purchase = Check . PurchaseRule
 
-purchase :: PurchaseRule -> Ast (Rule target)
-purchase = Pure . PurchaseRule
+-- Derived rule: repeated lines from one seller do not form a bundle.
+isBundle :: EligibilityExpr Rule
+isBundle = purchase (DistinctSellerCountGreaterThan 1)
 
-anyLine :: Ast (Rule 'Line) -> Ast (Rule 'Purchase)
-anyLine = Pure . AnyLine
+anyLine :: EligibilityExpr Rule -> EligibilityExpr Rule
+anyLine = AnyLine
 
-everyLine :: Ast (Rule 'Line) -> Ast (Rule 'Purchase)
-everyLine = Pure . EveryLine
+everyLine :: EligibilityExpr Rule -> EligibilityExpr Rule
+everyLine = EveryLine
