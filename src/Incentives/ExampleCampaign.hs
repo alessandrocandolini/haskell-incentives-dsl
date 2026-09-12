@@ -2,7 +2,7 @@
 
 module Incentives.ExampleCampaign where
 
-import Incentives.EligibilityExpr
+import Incentives.Ast
 import Incentives.Campaign
 import Incentives.CheckoutSummary (Currency (..), ShippingProvider (..), days)
 import Incentives.ExampleData (campaignEndsAt, campaignStartsAt, priceThreshold)

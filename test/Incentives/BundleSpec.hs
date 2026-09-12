@@ -4,7 +4,7 @@
 module Incentives.BundleSpec where
 
 import Data.Functor.Identity (runIdentity)
-import Incentives.EligibilityExpr (EligibilityExpr)
+import Incentives.Ast (Ast)
 import qualified Incentives.CheckoutSummary as Checkout
 import Incentives.Eligibility (Eligibility (..))
 import Incentives.ExampleData
@@ -16,7 +16,7 @@ import Test.Hspec
 spec :: Spec
 spec = describe "isBundle" $ do
   it "is pure rule data derived from distinct seller count" $
-    (isBundle :: EligibilityExpr Rule)
+    (isBundle :: Ast (Rule 'Purchase))
       `shouldBe` purchase (DistinctSellerCountGreaterThan 1)
 
   it "rejects a single seller" $

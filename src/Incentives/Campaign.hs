@@ -10,7 +10,7 @@ module Incentives.Campaign where
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import Incentives.EligibilityExpr (EligibilityExpr)
+import Incentives.Ast (Ast)
 import Incentives.CheckoutSummary (Price)
 import Incentives.Rule (Rule, Target (..))
 
@@ -37,7 +37,7 @@ newtype Offering (target :: Target) = Offering (NonEmpty (OfferingNode target))
 data OfferingNode (target :: Target) where
   GrantLine :: Incentive LineIncentiveTarget -> OfferingNode 'Line
   GrantPurchase :: Incentive PurchaseIncentiveTarget -> OfferingNode 'Purchase
-  When :: EligibilityExpr Rule -> Offering target -> OfferingNode target
+  When :: Ast (Rule target) -> Offering target -> OfferingNode target
   ForEachLine :: Offering 'Line -> OfferingNode 'Purchase
 
 deriving instance Eq (OfferingNode target)
@@ -55,7 +55,7 @@ instance IsIncentiveTarget PurchaseIncentiveTarget where
   type TargetOf PurchaseIncentiveTarget = 'Purchase
   grant incentive = Offering (GrantPurchase incentive :| [])
 
-when :: EligibilityExpr Rule -> Offering target -> Offering target
+when :: Ast (Rule target) -> Offering target -> Offering target
 when condition body = Offering (When condition body :| [])
 
 forEachLine :: Offering 'Line -> Offering 'Purchase

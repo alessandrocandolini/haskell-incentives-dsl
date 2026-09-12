@@ -7,7 +7,7 @@ module Incentives.CampaignSpec where
 import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Semigroup (sconcat)
-import Incentives.EligibilityExpr (EligibilityExpr)
+import Incentives.Ast (Ast)
 import Incentives.Campaign
 import Incentives.CheckoutSummary (Currency (..), days)
 import qualified Incentives.ExampleCampaign as Examples
@@ -17,7 +17,7 @@ import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Gen, elements, forAll, listOf, oneof, sized)
 
-cheap :: EligibilityExpr Rule
+cheap :: Ast (Rule 'Line)
 cheap = line (PriceLessThan priceThreshold)
 
 lineOffering :: Gen (Offering 'Line)
