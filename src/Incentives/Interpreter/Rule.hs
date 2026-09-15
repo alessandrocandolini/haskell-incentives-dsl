@@ -3,7 +3,9 @@
 
 module Incentives.Interpreter.Rule where
 
-import Data.Functor.Identity (Identity (..))
+import Data.Bifunctor (bimap)
+import Data.Functor.Contravariant (contramap)
+import Data.Functor.Identity (Identity)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (Text)
 import Numeric.Natural (Natural)
@@ -11,7 +13,7 @@ import Incentives.Ast (Ast (..))
 import qualified Incentives.CheckoutSummary as Checkout
 import Incentives.CheckoutSummary (CheckoutSummary, Currency, Days, LineId, Price, ShippingProvider)
 import Incentives.Eligibility (Eligibility)
-import Incentives.Interpreter (Interpreter (..), contramapContext)
+import Incentives.Interpreter (Interpreter (..), pack, unpack)
 import Incentives.Interpreter.Ast (interpretAst)
 import Incentives.Interpreter.Lines (interpretLines)
 import Incentives.Rule
@@ -60,6 +62,11 @@ data EvaluatedRule
   | EvaluatedPurchase PurchaseRule Eligibility
   deriving (Eq, Show)
 
+data PendingRule
+  = PendingLine Checkout.Line LineRule
+  | PendingPurchase PurchaseRule
+  deriving (Eq, Show)
+
 ruleEligibility :: EvaluatedRule -> Eligibility
 ruleEligibility (EvaluatedLine _ _ verdict) = verdict
 ruleEligibility (EvaluatedPurchase _ verdict) = verdict
@@ -70,19 +77,35 @@ interpretRule
   -> Interpreter m CheckoutSummary PurchaseRule Eligibility
   -> Interpreter m (Context target) (Rule target) (Ast EvaluatedRule)
 interpretRule lineInterpreter purchaseInterpreter =
-  fmap runIdentity <$> interpretRuleWith (Identity <$> lineInterpreter) (Identity <$> purchaseInterpreter)
+  interpretRuleWith
+    (Interpreter $ \checkoutLine primitive ->
+      EvaluatedLine (Checkout.lineId checkoutLine) primitive
+        <$> evaluate lineInterpreter checkoutLine primitive)
+    (Interpreter $ \checkout primitive ->
+      EvaluatedPurchase primitive <$> evaluate purchaseInterpreter checkout primitive)
 
--- Share scope dispatch and quantifier expansion between immediate and staged
--- results. Annotation maps through f without executing any pending effects.
+interpretRulePartially
+  :: Interpreter Identity Checkout.Line LineRule (Either Eligibility LineRule)
+  -> Interpreter Identity CheckoutSummary PurchaseRule (Either Eligibility PurchaseRule)
+  -> Interpreter Identity (Context target) (Rule target) (Ast (Either EvaluatedRule PendingRule))
+interpretRulePartially lineInterpreter purchaseInterpreter =
+  interpretRuleWith
+    (Interpreter $ \checkoutLine primitive ->
+      bimap (EvaluatedLine (Checkout.lineId checkoutLine) primitive) (PendingLine checkoutLine)
+        <$> evaluate lineInterpreter checkoutLine primitive)
+    (Interpreter $ \checkout primitive ->
+      bimap (EvaluatedPurchase primitive) PendingPurchase
+        <$> evaluate purchaseInterpreter checkout primitive)
+
 interpretRuleWith
-  :: (Applicative m, Functor f)
-  => Interpreter m Checkout.Line LineRule (f Eligibility)
-  -> Interpreter m CheckoutSummary PurchaseRule (f Eligibility)
-  -> Interpreter m (Context target) (Rule target) (Ast (f EvaluatedRule))
+  :: Applicative m
+  => Interpreter m Checkout.Line LineRule result
+  -> Interpreter m CheckoutSummary PurchaseRule result
+  -> Interpreter m (Context target) (Rule target) (Ast result)
 interpretRuleWith lineInterpreter purchaseInterpreter = Interpreter $ \context rule ->
   let checkout = checkoutSummary context
       quantified combine child =
-        let conditions = contramapContext (LineContext checkout)
+        let conditions = unpack $ contramap (LineContext checkout) $ pack
               (interpretAst (interpretRuleWith lineInterpreter purchaseInterpreter))
             combineLines ((_, first) :| rest) = foldl combine first (map snd rest)
         in combineLines
@@ -90,9 +113,8 @@ interpretRuleWith lineInterpreter purchaseInterpreter = Interpreter $ \context r
   in case rule of
     LineRule primitive -> case context of
       LineContext _ checkoutLine ->
-        Pure . fmap (EvaluatedLine (Checkout.lineId checkoutLine) primitive)
-          <$> evaluate lineInterpreter checkoutLine primitive
+        Pure <$> evaluate lineInterpreter checkoutLine primitive
     PurchaseRule primitive ->
-      Pure . fmap (EvaluatedPurchase primitive) <$> evaluate purchaseInterpreter checkout primitive
+      Pure <$> evaluate purchaseInterpreter checkout primitive
     AnyLine child -> quantified Or child
     EveryLine child -> quantified And child

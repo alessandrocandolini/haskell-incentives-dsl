@@ -2,19 +2,19 @@
 
 module Incentives.LinesInterpreterSpec where
 
+import Data.Functor.Contravariant (contramap)
 import Data.Functor.Identity (Identity, runIdentity)
 import qualified Incentives.CheckoutSummary as Checkout
 import Incentives.CheckoutSummary (Line, LineId (..), Price, currentPrice, lineId)
 import Incentives.Eligibility (Eligibility (..))
 import Incentives.ExampleData
-import Incentives.Interpreter (Interpreter (..))
+import Incentives.Interpreter (Interpreter (..), pack, unpack)
 import Incentives.Interpreter.Lines (interpretLines)
 import Incentives.Interpreter.PriceLessThan (priceLessThan)
 import Test.Hspec
 
 linePriceLessThan :: Interpreter Identity Line Price Eligibility
-linePriceLessThan = Interpreter $ \checkoutLine threshold ->
-  evaluate priceLessThan (currentPrice checkoutLine) threshold
+linePriceLessThan = unpack $ contramap currentPrice $ pack priceLessThan
 
 spec :: Spec
 spec = describe "interpretLines" $ do

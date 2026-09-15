@@ -6,7 +6,7 @@ import Incentives.Eligibility (Eligibility (..))
 import qualified Incentives.Eligibility as Eligibility
 import Incentives.Interpreter (Interpreter (..))
 import Incentives.Interpreter.Ast (interpretAst, minimumWitness, minimumPartialWitness)
-import Incentives.Interpreter.TwoStage (Staged (..), interpretAstTwoStage)
+import Incentives.Interpreter.TwoStage (interpretAstTwoStage)
 import Test.Hspec
 import Test.QuickCheck
 
@@ -19,26 +19,28 @@ spec = do
         `shouldBe` And (Not (Pure ("a" :: String, NotEligible))) (Not (Pure ("b", NotEligible)))
 
   describe "Two-stage AST interpretation" $ do
-    it "executes only surviving actions and retains their pure supporting evidence" $ do
-      let firstPass :: Interpreter Identity () String (Ast (Staged ((,) [String]) (String, Eligibility)))
+    it "interprets only surviving rules and retains their pure supporting evidence" $ do
+      let firstPass :: Interpreter Identity () String (Ast (Either (String, Eligibility) String))
           firstPass = Interpreter $ \() ruleName -> pure $ Pure $
-            if ruleName == "known" then Known (ruleName, Eligible)
-            else Deferred ([ruleName], (ruleName, Eligible))
-      evaluate (interpretAstTwoStage snd firstPass) ()
+            if ruleName == "known" then Left (ruleName, Eligible)
+            else Right ruleName
+          secondPass = Interpreter $ \() ruleName -> ([ruleName], Pure (ruleName, Eligible))
+      evaluate (interpretAstTwoStage snd firstPass secondPass) ()
         (And (Or (Pure "unneeded") (Pure "known")) (Pure "needed"))
         `shouldBe` (["needed"], And (Pure ("known", Eligible)) (Pure ("needed", Eligible)))
 
     it "leaves an unresolved negation for the second pass" $ do
-      let firstPass :: Interpreter Identity () String (Ast (Staged ((,) [String]) (String, Eligibility)))
-          firstPass = Interpreter $ \() ruleName ->
-            pure (Pure (Deferred ([ruleName], (ruleName, NotEligible))))
-      evaluate (interpretAstTwoStage snd firstPass) () (Not (Pure "needed"))
+      let firstPass :: Interpreter Identity () String (Ast (Either (String, Eligibility) String))
+          firstPass = Interpreter $ \() ruleName -> pure (Pure (Right ruleName))
+          secondPass = Interpreter $ \() ruleName -> ([ruleName], Pure (ruleName, NotEligible))
+      evaluate (interpretAstTwoStage snd firstPass secondPass) () (Not (Pure "needed"))
         `shouldBe` (["needed"], Not (Pure ("needed", NotEligible)))
 
     it "propagates a surviving client failure under negation" $ do
-      let firstPass :: Interpreter Identity () () (Ast (Staged IO Eligibility))
-          firstPass = Interpreter $ \() () -> pure (Pure (Deferred (fail "Upstream unavailable")))
-      evaluate (interpretAstTwoStage id firstPass) () (Not (Pure ()))
+      let firstPass :: Interpreter Identity () () (Ast (Either Eligibility ()))
+          firstPass = Interpreter $ \() () -> pure (Pure (Right ()))
+          secondPass = Interpreter $ \() () -> fail "Upstream unavailable"
+      evaluate (interpretAstTwoStage id firstPass secondPass) () (Not (Pure ()))
         `shouldThrow` anyIOException
 
   describe "Partial eligibility fold" $ do

@@ -3,8 +3,10 @@
 module Incentives.OptimisationSpec where
 
 import Control.Monad (unless)
+import Data.Functor.Identity (runIdentity)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List.NonEmpty (NonEmpty (..))
+import qualified Data.List.NonEmpty as NonEmpty
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -22,9 +24,10 @@ import Incentives.Eligibility (Eligibility (..))
 import Incentives.GrantedIncentive
 import Incentives.Rule
 import Incentives.Interpreter (evaluate)
+import Incentives.Interpreter.Ast (interpretAst)
 import Incentives.Interpreter.Campaign (CampaignResult (..))
-import Incentives.Interpreter.Checkout (twoStageCheckoutInterpreter)
-import Incentives.Interpreter.Rule (EvaluatedRule (..))
+import Incentives.Interpreter.Checkout (partialCheckoutRuleInterpreter, twoStageCheckoutInterpreter)
+import Incentives.Interpreter.Rule (Context (..), EvaluatedRule (..), PendingRule (..))
 import Test.Hspec
 
 -- Pruning has its own acceptance tests. The shared-batching test remains RED
@@ -54,6 +57,23 @@ batchingSpec =
 
 pruningSpec :: Spec
 pruningSpec = do
+  it "retains inspectable rules and their line contexts in the pure intermediate tree" $ do
+    let expression = And
+          (purchase (CurrencyIs USD))
+          (And
+            (purchase (BuyerAccountAgeGreaterThan (days 365)))
+            (anyLine (line (ProductCategoryIs "books"))))
+        partial = runIdentity $ evaluate (interpretAst partialCheckoutRuleInterpreter)
+          (PurchaseContext checkout) expression
+    partial `shouldBe` And
+      (Pure (Left (EvaluatedPurchase (CurrencyIs USD) Eligible)))
+      (And
+        (Pure (Right (PendingPurchase (BuyerAccountAgeGreaterThan (days 365)))))
+        (foldl1 Or
+          [ Pure (Right (PendingLine checkoutLine (ProductCategoryIs "books")))
+          | checkoutLine <- NonEmpty.toList (Checkout.lines checkout)
+          ]))
+
   it "makes no upstream requests when the pure currency gate rejects both campaigns" $ do
     (products, users, assertNoRequests) <- unavailableClients
     result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) (inexpensiveCheckout { Checkout.currency = GBP })

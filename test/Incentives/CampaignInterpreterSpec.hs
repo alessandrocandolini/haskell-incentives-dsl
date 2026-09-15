@@ -1,5 +1,6 @@
 module Incentives.CampaignInterpreterSpec where
 
+import Data.Functor.Contravariant (contramap)
 import Incentives.Ast (Ast (..))
 import Incentives.Campaign (Campaign, CampaignId, Incentive (..), Discount (..), LineIncentiveTarget (..), PurchaseIncentiveTarget (..), campaignId)
 import Incentives.CheckoutSummary (days)
@@ -10,7 +11,7 @@ import Incentives.ExampleData
 import Incentives.Eligibility (Eligibility (..))
 import qualified Incentives.Eligibility as Eligibility
 import Incentives.GrantedIncentive
-import Incentives.Interpreter (evaluate, contramapContext)
+import Incentives.Interpreter (evaluate, pack, unpack)
 import Incentives.Interpreter.Ast (interpretAst, minimumWitness)
 import Incentives.Interpreter.Campaign (CampaignResult (..), interpretCampaigns)
 import Incentives.Interpreter.Checkout (fullCheckoutInterpreter, twoStageCheckoutInterpreter, checkoutLineInterpreters, checkoutPurchaseInterpreters)
@@ -56,7 +57,7 @@ spec = describe "Campaign interpretation" $ do
           , Products.fetchBatch = \_ -> fail "The replacement category interpreter must not fetch products"
           }
         lineInterpreters = (checkoutLineInterpreters products stubUserDetailsClient exampleNow)
-          { category = contramapContext (const "books") productCategoryIs }
+          { category = unpack $ contramap (const "books") $ pack productCategoryIs }
         interpreter = interpretCampaigns (minimumWitness ruleEligibility <$> interpretAst (interpretRule
           (interpretLineRule lineInterpreters)
           (interpretPurchaseRule (checkoutPurchaseInterpreters stubUserDetailsClient exampleNow))))
