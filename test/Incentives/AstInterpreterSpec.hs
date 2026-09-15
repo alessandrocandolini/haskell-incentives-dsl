@@ -1,6 +1,7 @@
 module Incentives.AstInterpreterSpec where
 
 import Data.Functor.Identity (Identity, runIdentity)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Incentives.Ast (Ast (..))
 import Incentives.Eligibility (Eligibility (..))
 import qualified Incentives.Eligibility as Eligibility
@@ -20,21 +21,51 @@ spec = do
 
   describe "Two-stage AST interpretation" $ do
     it "interprets only surviving rules and retains their pure supporting evidence" $ do
+      requests <- newIORef []
       let firstPass :: Interpreter Identity () String (Ast (Either (String, Eligibility) String))
           firstPass = Interpreter $ \() ruleName -> pure $ Pure $
             if ruleName == "known" then Left (ruleName, Eligible)
             else Right ruleName
-          secondPass = Interpreter $ \() ruleName -> ([ruleName], Pure (ruleName, Eligible))
+          client ruleName = do
+            modifyIORef' requests (++ [ruleName])
+            if ruleName == "needed" then pure Eligible
+            else ioError (userError ("Unexpected request: " ++ ruleName))
+          secondPass = Interpreter $ \() ruleName ->
+            Pure . (,) ruleName <$> client ruleName
       evaluate (interpretAstTwoStage snd firstPass secondPass) ()
         (And (Or (Pure "unneeded") (Pure "known")) (Pure "needed"))
-        `shouldBe` (["needed"], And (Pure ("known", Eligible)) (Pure ("needed", Eligible)))
+        `shouldReturn` And (Pure ("known", Eligible)) (Pure ("needed", Eligible))
+      readIORef requests `shouldReturn` ["needed"]
+
+    it "never calls a failing IO client when either Or branch is already eligible" $ do
+      requests <- newIORef []
+      let firstPass :: Interpreter Identity () String (Ast (Either Eligibility String))
+          firstPass = Interpreter $ \() ruleName -> pure $ Pure $
+            if ruleName == "known" then Left Eligible else Right ruleName
+          client ruleName = do
+            modifyIORef' requests (++ [ruleName])
+            ioError (userError ("Pruned request: " ++ ruleName))
+          secondPass = Interpreter $ \() ruleName -> Pure <$> client ruleName
+          interpreter = interpretAstTwoStage id firstPass secondPass
+      evaluate interpreter () (Or (Pure "known") (Pure "unneeded"))
+        `shouldReturn` Pure Eligible
+      evaluate interpreter () (Or (Pure "unneeded") (Pure "known"))
+        `shouldReturn` Pure Eligible
+      readIORef requests `shouldReturn` []
 
     it "leaves an unresolved negation for the second pass" $ do
+      requests <- newIORef []
       let firstPass :: Interpreter Identity () String (Ast (Either (String, Eligibility) String))
           firstPass = Interpreter $ \() ruleName -> pure (Pure (Right ruleName))
-          secondPass = Interpreter $ \() ruleName -> ([ruleName], Pure (ruleName, NotEligible))
+          client ruleName = do
+            modifyIORef' requests (++ [ruleName])
+            if ruleName == "needed" then pure NotEligible
+            else ioError (userError ("Unexpected request: " ++ ruleName))
+          secondPass = Interpreter $ \() ruleName ->
+            Pure . (,) ruleName <$> client ruleName
       evaluate (interpretAstTwoStage snd firstPass secondPass) () (Not (Pure "needed"))
-        `shouldBe` (["needed"], Not (Pure ("needed", NotEligible)))
+        `shouldReturn` Not (Pure ("needed", NotEligible))
+      readIORef requests `shouldReturn` ["needed"]
 
     it "propagates a surviving client failure under negation" $ do
       let firstPass :: Interpreter Identity () () (Ast (Either Eligibility ()))
