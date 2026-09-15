@@ -7,9 +7,9 @@ import qualified Incentives.Client.UserDetails as UserDetails
 import Incentives.ExampleData (productDetailsById, userDetailsById)
 
 stubProductDetailsClient :: Applicative m => ProductDetails.ProductDetailsClient m
-stubProductDetailsClient = ProductDetails.fromFetchBatch $ \identifiers ->
+stubProductDetailsClient = ProductDetails.ProductDetailsClient $ \identifiers ->
   pure (Map.restrictKeys productDetailsById (NESet.toSet identifiers))
 
 stubUserDetailsClient :: Applicative m => UserDetails.UserDetailsClient m
-stubUserDetailsClient = UserDetails.fromFetchBatch $ \identifiers ->
+stubUserDetailsClient = UserDetails.UserDetailsClient $ \identifiers ->
   pure (Map.restrictKeys userDetailsById (NESet.toSet identifiers))

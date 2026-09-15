@@ -26,6 +26,7 @@ dependencies:
 - comonad
 - data-fix
 - selective
+- unliftio
 
 default-extensions:
 - OverloadedStrings
@@ -66,6 +67,7 @@ tests:
     - haskell-incentives-dsl
     - hspec
     - QuickCheck
+    - transformers
     build-tools:
     - hspec-discover
 

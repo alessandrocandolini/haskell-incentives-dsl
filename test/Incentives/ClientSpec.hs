@@ -16,11 +16,11 @@ spec = do
   describe "ProductDetailsClient stub" $ do
     it "returns every configured product by ID" $
       mapM_ (\(identifier, details) ->
-        runIdentity (ProductDetails.fetch stubProductDetailsClient identifier)
-          `shouldBe` Just details) (Map.toList productDetailsById)
-    it "returns Nothing for an unknown product" $
-      runIdentity (ProductDetails.fetch stubProductDetailsClient (ProductId "missing"))
-        `shouldBe` Nothing
+        runIdentity (ProductDetails.fetchBatch stubProductDetailsClient (NESet.singleton identifier))
+          `shouldBe` Map.singleton identifier details) (Map.toList productDetailsById)
+    it "omits an unknown product from a singleton batch" $
+      runIdentity (ProductDetails.fetchBatch stubProductDetailsClient (NESet.singleton (ProductId "missing")))
+        `shouldBe` Map.empty
     it "returns only requested known products in a mixed batch" $
       runIdentity (ProductDetails.fetchBatch stubProductDetailsClient
         (NESet.fromList (bookId :| [ProductId "missing", clothingId])))
@@ -33,22 +33,15 @@ spec = do
       runIdentity (ProductDetails.fetchBatch stubProductDetailsClient
         (NESet.fromList (bookId :| [bookId])))
         `shouldBe` Map.singleton bookId bookDetails
-    it "derives fetch from one singleton batch, preserving effects" $ do
-      let client = ProductDetails.fromFetchBatch $ \identifiers ->
-            ([identifiers], Map.restrictKeys productDetailsById (NESet.toSet identifiers))
-      ProductDetails.fetch client bookId
-        `shouldBe` ([NESet.singleton bookId], Just bookDetails)
-      ProductDetails.fetch client (ProductId "missing")
-        `shouldBe` ([NESet.singleton (ProductId "missing")], Nothing)
 
   describe "UserDetailsClient stub" $ do
     it "returns the buyer and both sellers by ID" $
       mapM_ (\(identifier, details) ->
-        runIdentity (UserDetails.fetch stubUserDetailsClient identifier)
-          `shouldBe` Just details) (Map.toList userDetailsById)
-    it "returns Nothing for an unknown user" $
-      runIdentity (UserDetails.fetch stubUserDetailsClient (UserId "missing"))
-        `shouldBe` Nothing
+        runIdentity (UserDetails.fetchBatch stubUserDetailsClient (NESet.singleton identifier))
+          `shouldBe` Map.singleton identifier details) (Map.toList userDetailsById)
+    it "omits an unknown user from a singleton batch" $
+      runIdentity (UserDetails.fetchBatch stubUserDetailsClient (NESet.singleton (UserId "missing")))
+        `shouldBe` Map.empty
     it "returns only requested known users in a mixed batch" $
       runIdentity (UserDetails.fetchBatch stubUserDetailsClient
         (NESet.fromList (exampleBuyerId :| [UserId "missing", recentSellerId])))
@@ -62,10 +55,3 @@ spec = do
       runIdentity (UserDetails.fetchBatch stubUserDetailsClient
         (NESet.fromList (exampleBuyerId :| [exampleBuyerId])))
         `shouldBe` Map.singleton exampleBuyerId buyerDetails
-    it "derives fetch from one singleton batch, preserving effects" $ do
-      let client = UserDetails.fromFetchBatch $ \identifiers ->
-            ([identifiers], Map.restrictKeys userDetailsById (NESet.toSet identifiers))
-      UserDetails.fetch client exampleBuyerId
-        `shouldBe` ([NESet.singleton exampleBuyerId], Just buyerDetails)
-      UserDetails.fetch client (UserId "missing")
-        `shouldBe` ([NESet.singleton (UserId "missing")], Nothing)

@@ -10,6 +10,7 @@ import qualified Incentives.ExampleCampaign as Examples
 import Incentives.ExampleData
 import Incentives.Eligibility (Eligibility (..))
 import qualified Incentives.Eligibility as Eligibility
+import Incentives.Fetch (runFetch)
 import Incentives.GrantedIncentive
 import Incentives.Interpreter (evaluate, pack, unpack)
 import Incentives.Interpreter.Ast (interpretAst, minimumWitness)
@@ -42,7 +43,7 @@ spec = describe "Campaign interpretation" $ do
   it "agrees with the full interpreter on grants and gate verdicts across all six campaigns" $ do
     full <- evaluate (fullCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow)
       exampleCheckout exampleCampaigns
-    staged <- evaluate (twoStageCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow)
+    staged <- runFetch stubProductDetailsClient stubUserDetailsClient $ evaluate (twoStageCheckoutInterpreter exampleNow)
       exampleCheckout exampleCampaigns
     let decisions result =
           ( resultCampaignId result
@@ -53,8 +54,7 @@ spec = describe "Campaign interpretation" $ do
 
   it "accepts a separately supplied category interpreter inside both line quantifiers" $ do
     let products = Products.ProductDetailsClient
-          { Products.fetch = \_ -> fail "The replacement category interpreter must not fetch products"
-          , Products.fetchBatch = \_ -> fail "The replacement category interpreter must not fetch products"
+          { Products.fetchBatch = \_ -> fail "The replacement category interpreter must not fetch products"
           }
         lineInterpreters = (checkoutLineInterpreters products stubUserDetailsClient exampleNow)
           { category = unpack $ contramap (const "books") $ pack productCategoryIs }

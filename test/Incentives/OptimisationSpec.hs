@@ -21,6 +21,7 @@ import qualified Incentives.Client.ProductDetails as Products
 import qualified Incentives.Client.UserDetails as Users
 import Incentives.ExampleData (exampleNow, campaignStartsAt, campaignEndsAt)
 import Incentives.Eligibility (Eligibility (..))
+import Incentives.Fetch (runFetch)
 import Incentives.GrantedIncentive
 import Incentives.Rule
 import Incentives.Interpreter (evaluate)
@@ -30,11 +31,9 @@ import Incentives.Interpreter.Checkout (partialCheckoutRuleInterpreter, twoStage
 import Incentives.Interpreter.Rule (Context (..), EvaluatedRule (..), PendingRule (..))
 import Test.Hspec
 
--- Pruning has its own acceptance tests. The shared-batching test remains RED
--- until surviving requests can be collected across campaigns and checkout lines.
 spec :: Spec
 spec = do
-  describe "Pruning without batching" pruningSpec
+  describe "Pure pruning" pruningSpec
   describe "Pruning and shared batching" batchingSpec
 
 batchingSpec :: Spec
@@ -46,7 +45,7 @@ batchingSpec =
     (products, users, assertRequests) <- strictClients
       (Set.fromList [product1, product2, product3, product4])
       (Set.fromList [buyer, seller1, seller2])
-    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) checkout [bookCampaign, boostingCampaign]
+    result <- runFetch products users $ evaluate (twoStageCheckoutInterpreter exampleNow) checkout [bookCampaign, boostingCampaign]
     attributedResults result `shouldMatchList`
       [ (campaignId bookCampaign, LineGrant line1 (Waive SellingFee))
       , (campaignId boostingCampaign, LineGrant line1 (Waive BoostingFee))
@@ -76,7 +75,7 @@ pruningSpec = do
 
   it "makes no upstream requests when the pure currency gate rejects both campaigns" $ do
     (products, users, assertNoRequests) <- unavailableClients
-    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) (inexpensiveCheckout { Checkout.currency = GBP })
+    result <- runFetch products users $ evaluate (twoStageCheckoutInterpreter exampleNow) (inexpensiveCheckout { Checkout.currency = GBP })
       [bookCampaign, boostingCampaign]
     map grantedIncentives result `shouldBe` [[], []]
     map evaluatedConditions result `shouldBe` replicate 2
@@ -87,7 +86,7 @@ pruningSpec = do
 
   it "grants on a true pure Or branch without fetching its effectful sibling" $ do
     (products, users, assertNoRequests) <- unavailableClients
-    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) inexpensiveCheckout [boostingCampaign]
+    result <- runFetch products users $ evaluate (twoStageCheckoutInterpreter exampleNow) inexpensiveCheckout [boostingCampaign]
     attributedResults result `shouldMatchList`
       [ (campaignId boostingCampaign, LineGrant ident (Waive BoostingFee))
       | ident <- [line1, line2, line3, line4, line5]
@@ -113,7 +112,7 @@ pruningSpec = do
               (Not (everyLine (line (ProductCategoryIs "books") .&&. line (PriceLessThan (amount 1)))))
               (grant (Waive ShippingCost))
           }
-    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) inexpensiveCheckout
+    result <- runFetch products users $ evaluate (twoStageCheckoutInterpreter exampleNow) inexpensiveCheckout
       [existential, negatedUniversal]
     result `shouldBe`
       [ CampaignResult (campaignId existential) [PurchaseGrant (Waive ShippingCost)]
@@ -133,12 +132,10 @@ unavailableClients = do
         atomicModifyIORef' requests (\previous -> (request : previous, ()))
         fail ("Pure pruning must avoid every upstream request: " ++ show request)
       products = Products.ProductDetailsClient
-        { Products.fetch = unexpected . ProductFetch
-        , Products.fetchBatch = unexpected . ProductBatch . NESet.toSet
+        { Products.fetchBatch = unexpected . ProductBatch . NESet.toSet
         }
       users = Users.UserDetailsClient
-        { Users.fetch = unexpected . UserFetch
-        , Users.fetchBatch = unexpected . UserBatch . NESet.toSet
+        { Users.fetchBatch = unexpected . UserBatch . NESet.toSet
         }
   pure (products, users, readIORef requests `shouldReturn` [])
 
@@ -249,9 +246,7 @@ userFacts = Map.fromList
   ]
 
 data Request
-  = ProductFetch ProductId
-  | ProductBatch (Set ProductId)
-  | UserFetch UserId
+  = ProductBatch (Set ProductId)
   | UserBatch (Set UserId)
   deriving (Eq, Show)
 
@@ -266,10 +261,7 @@ strictClients expectedProducts expectedUsers = do
   requests <- newIORef []
   let record request = atomicModifyIORef' requests (\previous -> (request : previous, previous))
       products = Products.ProductDetailsClient
-        { Products.fetch = \ident -> do
-            _ <- record (ProductFetch ident)
-            ioError (userError ("Forbidden products.fetch " ++ show ident ++ "; expected product batches: " ++ show expectedProducts))
-        , Products.fetchBatch = \identifiers -> do
+        { Products.fetchBatch = \identifiers -> do
             let requested = NESet.toSet identifiers
             previous <- record (ProductBatch requested)
             unless (requested == expectedProducts) $
@@ -279,10 +271,7 @@ strictClients expectedProducts expectedUsers = do
             pure (Map.restrictKeys productFacts requested)
         }
       users = Users.UserDetailsClient
-        { Users.fetch = \ident -> do
-            _ <- record (UserFetch ident)
-            ioError (userError ("Forbidden users.fetch " ++ show ident ++ "; expected user batches: " ++ show expectedUsers))
-        , Users.fetchBatch = \identifiers -> do
+        { Users.fetchBatch = \identifiers -> do
             let requested = NESet.toSet identifiers
             previous <- record (UserBatch requested)
             unless (requested == expectedUsers) $
@@ -298,9 +287,7 @@ strictClients expectedProducts expectedUsers = do
             ++ [UserBatch expectedUsers | not (Set.null expectedUsers)])
   pure (products, users, assertRequests)
   where
-    isProductRequest (ProductFetch _) = True
     isProductRequest (ProductBatch _) = True
     isProductRequest _ = False
-    isUserRequest (UserFetch _) = True
     isUserRequest (UserBatch _) = True
     isUserRequest _ = False

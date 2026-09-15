@@ -10,6 +10,7 @@ module Incentives.Interpreter.Campaign
   , interpretCampaigns
   ) where
 
+import Control.Selective (Selective, select)
 import Data.Foldable (fold)
 import Incentives.Ast (Ast)
 import Incentives.Campaign
@@ -33,7 +34,7 @@ data CampaignResult = CampaignResult
 
 -- Campaign structure depends only on supplied condition interpreters.
 interpretOffering
-  :: forall m target. Monad m
+  :: forall m target. Selective m
   => (forall scope. Interpreter m (Context scope) (Ast (Rule scope)) (Ast EvaluatedRule))
   -> Interpreter m (Context target) (Offering target)
        ([GrantedIncentive], [(Maybe LineId, Ast EvaluatedRule)])
@@ -42,15 +43,18 @@ interpretOffering conditions = Interpreter $ \context (Offering nodes) ->
       step (GrantLine incentive) = case context of
         LineContext _ checkoutLine -> pure ([LineGrant (Checkout.lineId checkoutLine) incentive], [])
       step (GrantPurchase incentive) = pure ([PurchaseGrant incentive], [])
-      step (When condition body) = do
-        evaluated <- evaluate conditions context condition
+      step (When condition body) =
         let currentLine = case context of
               PurchaseContext _ -> Nothing
               LineContext _ checkoutLine -> Just (Checkout.lineId checkoutLine)
-        (grants, children) <- if Eligibility.evaluate (ruleEligibility <$> evaluated) == Eligible
-          then evaluate (interpretOffering conditions) context body
-          else pure ([], [])
-        pure (grants, (currentLine, evaluated) : children)
+            choose evaluated =
+              if Eligibility.evaluate (ruleEligibility <$> evaluated) == Eligible
+                then Left evaluated
+                else Right ([], [(currentLine, evaluated)])
+            attach (grants, children) evaluated =
+              (grants, (currentLine, evaluated) : children)
+        in select (choose <$> evaluate conditions context condition)
+             (attach <$> evaluate (interpretOffering conditions) context body)
       step (ForEachLine body) =
         fold <$> traverse
           (\checkoutLine -> evaluate (interpretOffering conditions)
@@ -59,16 +63,16 @@ interpretOffering conditions = Interpreter $ \context (Offering nodes) ->
   in fold <$> traverse step nodes
 
 interpretCampaign
-  :: Monad m
+  :: Selective m
   => (forall scope. Interpreter m (Context scope) (Ast (Rule scope)) (Ast EvaluatedRule))
   -> Interpreter m CheckoutSummary Campaign CampaignResult
-interpretCampaign conditions = Interpreter $ \checkout campaign -> do
-  (grants, trees) <- evaluate (interpretOffering conditions) (PurchaseContext checkout) (offering campaign)
-  pure (CampaignResult (campaignId campaign) grants trees)
+interpretCampaign conditions = Interpreter $ \checkout campaign ->
+  uncurry (CampaignResult (campaignId campaign))
+    <$> evaluate (interpretOffering conditions) (PurchaseContext checkout) (offering campaign)
 
 -- The caller supplies active campaigns.
 interpretCampaigns
-  :: Monad m
+  :: Selective m
   => (forall scope. Interpreter m (Context scope) (Ast (Rule scope)) (Ast EvaluatedRule))
   -> Interpreter m CheckoutSummary [Campaign] [CampaignResult]
 interpretCampaigns conditions = interpretMany (interpretCampaign conditions)

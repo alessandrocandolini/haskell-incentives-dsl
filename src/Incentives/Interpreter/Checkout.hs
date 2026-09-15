@@ -1,13 +1,18 @@
 module Incentives.Interpreter.Checkout
   ( fullCheckoutInterpreter
   , twoStageCheckoutInterpreter
+  , fetchLineInterpreters
+  , fetchPurchaseInterpreters
   , partialCheckoutRuleInterpreter
   , checkoutLineInterpreters
   , checkoutPurchaseInterpreters
   ) where
 
+import Control.Selective (Selective)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set.NonEmpty as NESet
 import Data.Functor.Contravariant (contramap)
-import Data.Functor.Identity (Identity)
+import Data.Functor.Identity (Identity, runIdentity)
 import Data.Text (Text)
 import Data.Time (UTCTime, diffUTCTime)
 import Incentives.Ast (Ast)
@@ -17,7 +22,8 @@ import Incentives.CheckoutSummary (CheckoutSummary, Days, Line, ProductId, UserI
 import qualified Incentives.Client.ProductDetails as Products
 import qualified Incentives.Client.UserDetails as Users
 import Incentives.Eligibility (Eligibility)
-import Incentives.Interpreter (Interpreter (..), pack, unpack, contramapContextM)
+import Incentives.Fetch (Fetch, Request, fetchProduct, fetchUser)
+import Incentives.Interpreter (Interpreter (..), pack, unpack)
 import Incentives.Interpreter.Ast (interpretAst, minimumWitness)
 import Incentives.Interpreter.BuyerAccountAgeGreaterThan (buyerAccountAgeGreaterThan)
 import Incentives.Interpreter.Campaign (CampaignResult, interpretCampaigns)
@@ -36,7 +42,7 @@ import Incentives.Rule (Rule (..), LineRule (..), PurchaseRule (..))
 
 -- Compose the full, unoptimised interpreter from independently wired leaves.
 fullCheckoutInterpreter
-  :: MonadFail m
+  :: (MonadFail m, Selective m)
   => Products.ProductDetailsClient m
   -> Users.UserDetailsClient m
   -> UTCTime
@@ -46,20 +52,15 @@ fullCheckoutInterpreter products users now =
     (interpretLineRule (checkoutLineInterpreters products users now))
     (interpretPurchaseRule (checkoutPurchaseInterpreters users now))))
 
--- The same campaign traversal, with cheap rules evaluated before client calls.
--- Surviving client calls still use individual lookups.
 twoStageCheckoutInterpreter
-  :: MonadFail m
-  => Products.ProductDetailsClient m
-  -> Users.UserDetailsClient m
-  -> UTCTime
-  -> Interpreter m CheckoutSummary [Campaign] [CampaignResult]
-twoStageCheckoutInterpreter products users now =
+  :: UTCTime
+  -> Interpreter (Fetch Request) CheckoutSummary [Campaign] [CampaignResult]
+twoStageCheckoutInterpreter now =
   interpretCampaigns (interpretAstTwoStage ruleEligibility partialCheckoutRuleInterpreter secondPass)
   where
     fullRules = interpretRule
-      (interpretLineRule (checkoutLineInterpreters products users now))
-      (interpretPurchaseRule (checkoutPurchaseInterpreters users now))
+      (interpretLineRule (fetchLineInterpreters now))
+      (interpretPurchaseRule (fetchPurchaseInterpreters now))
     secondPass = Interpreter $ \context pending ->
       let checkout = checkoutSummary context
       in case pending of
@@ -86,40 +87,72 @@ partialCheckoutRuleInterpreter = interpretRulePartially
       , distinctSellerCount = Left <$> (unpack $ contramap (fmap Checkout.sellerId . Checkout.lines) $ pack distinctSellerCountGreaterThan)
       }
 
--- Checkout-specific supply for the existing, narrow rule interpreters.
--- This baseline uses individual lookups; batching and pruning are still absent.
 checkoutLineInterpreters
   :: MonadFail m
   => Products.ProductDetailsClient m
   -> Users.UserDetailsClient m
   -> UTCTime
   -> LineInterpreters m Line Eligibility
-checkoutLineInterpreters products users now = LineInterpreters
-  { price = unpack $ contramap Checkout.currentPrice $ pack priceLessThan
-  , category = contramapContextM (fetchCategory products . Checkout.productId) productCategoryIs
-  , sellerAge = contramapContextM (fetchAccountAge users now . Checkout.sellerId) sellerAccountAgeGreaterThan
-  }
+checkoutLineInterpreters products users now =
+  lineInterpretersWith (fetchCategory products) (fetchAccountAge users now)
 
 checkoutPurchaseInterpreters
   :: MonadFail m
   => Users.UserDetailsClient m
   -> UTCTime
   -> PurchaseInterpreters m CheckoutSummary Eligibility
-checkoutPurchaseInterpreters users now = PurchaseInterpreters
+checkoutPurchaseInterpreters users now =
+  purchaseInterpretersWith (fetchAccountAge users now)
+
+fetchLineInterpreters :: UTCTime -> LineInterpreters (Fetch Request) Line Eligibility
+fetchLineInterpreters now = lineInterpretersWith
+  (fmap Products.category . fetchProduct)
+  (fmap (accountAge now) . fetchUser)
+
+fetchPurchaseInterpreters :: UTCTime -> PurchaseInterpreters (Fetch Request) CheckoutSummary Eligibility
+fetchPurchaseInterpreters now = purchaseInterpretersWith (fmap (accountAge now) . fetchUser)
+
+lineInterpretersWith
+  :: Applicative m
+  => (ProductId -> m Text)
+  -> (UserId -> m Days)
+  -> LineInterpreters m Line Eligibility
+lineInterpretersWith categoryFor ageFor = LineInterpreters
+  { price = unpack $ contramap Checkout.currentPrice $ pack priceLessThan
+  , category = supply (categoryFor . Checkout.productId) productCategoryIs
+  , sellerAge = supply (ageFor . Checkout.sellerId) sellerAccountAgeGreaterThan
+  }
+
+purchaseInterpretersWith
+  :: Applicative m
+  => (UserId -> m Days)
+  -> PurchaseInterpreters m CheckoutSummary Eligibility
+purchaseInterpretersWith ageFor = PurchaseInterpreters
   { currency = unpack $ contramap Checkout.currency $ pack currencyIs
   , shippingProvider = unpack $ contramap (Checkout.shippingProvider . Checkout.shipping) $ pack shippingProviderIs
-  , buyerAge = contramapContextM (fetchAccountAge users now . Checkout.buyerId) buyerAccountAgeGreaterThan
+  , buyerAge = supply (ageFor . Checkout.buyerId) buyerAccountAgeGreaterThan
   , distinctSellerCount = unpack $ contramap (fmap Checkout.sellerId . Checkout.lines) $ pack distinctSellerCountGreaterThan
   }
 
+supply
+  :: Functor m
+  => (outer -> m inner)
+  -> Interpreter Identity inner input output
+  -> Interpreter m outer input output
+supply contextFor interpreter = Interpreter $ \context input ->
+  (\inner -> runIdentity (evaluate interpreter inner input)) <$> contextFor context
+
 fetchCategory :: MonadFail m => Products.ProductDetailsClient m -> ProductId -> m Text
 fetchCategory products ident = do
-  result <- Products.fetch products ident
-  maybe (fail ("Missing product details: " ++ show ident)) (pure . Products.category) result
+  result <- Products.fetchBatch products (NESet.singleton ident)
+  maybe (fail ("Missing product details: " ++ show ident)) (pure . Products.category) (Map.lookup ident result)
 
 fetchAccountAge :: MonadFail m => Users.UserDetailsClient m -> UTCTime -> UserId -> m Days
 fetchAccountAge users now ident = do
-  result <- Users.fetch users ident
-  details <- maybe (fail ("Missing user details: " ++ show ident)) pure result
+  result <- Users.fetchBatch users (NESet.singleton ident)
+  maybe (fail ("Missing user details: " ++ show ident)) (pure . accountAge now) (Map.lookup ident result)
+
+accountAge :: UTCTime -> Users.UserDetails -> Days
+accountAge now details =
   let elapsedDays = floor (diffUTCTime now (Users.accountCreatedAt details) / 86400)
-  pure (days (fromInteger (max 0 elapsedDays)))
+  in days (fromInteger (max 0 elapsedDays))
