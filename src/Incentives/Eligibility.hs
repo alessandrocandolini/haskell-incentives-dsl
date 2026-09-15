@@ -21,3 +21,19 @@ eligibilityAlgebra (OrF Eligible _) = Eligible
 eligibilityAlgebra (OrF NotEligible right) = right
 eligibilityAlgebra (NotF Eligible) = NotEligible
 eligibilityAlgebra (NotF NotEligible) = Eligible
+
+-- Nothing means not evaluated yet, not a failed or missing upstream result.
+evaluatePartial :: Ast (Maybe Eligibility) -> Maybe Eligibility
+evaluatePartial = cata partialEligibilityAlgebra
+
+partialEligibilityAlgebra :: AstF (Maybe Eligibility) (Maybe Eligibility) -> Maybe Eligibility
+partialEligibilityAlgebra (PureF result) = result
+partialEligibilityAlgebra (AndF (Just NotEligible) _) = Just NotEligible
+partialEligibilityAlgebra (AndF _ (Just NotEligible)) = Just NotEligible
+partialEligibilityAlgebra (AndF (Just Eligible) (Just Eligible)) = Just Eligible
+partialEligibilityAlgebra (AndF _ _) = Nothing
+partialEligibilityAlgebra (OrF (Just Eligible) _) = Just Eligible
+partialEligibilityAlgebra (OrF _ (Just Eligible)) = Just Eligible
+partialEligibilityAlgebra (OrF (Just NotEligible) (Just NotEligible)) = Just NotEligible
+partialEligibilityAlgebra (OrF _ _) = Nothing
+partialEligibilityAlgebra (NotF result) = eligibilityAlgebra . NotF <$> result

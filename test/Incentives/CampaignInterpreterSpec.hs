@@ -1,31 +1,30 @@
 module Incentives.CampaignInterpreterSpec where
 
+import Incentives.Ast (Ast (..))
 import Incentives.Campaign (Campaign, CampaignId, Incentive (..), Discount (..), LineIncentiveTarget (..), PurchaseIncentiveTarget (..), campaignId)
+import Incentives.CheckoutSummary (days)
 import qualified Incentives.Client.ProductDetails as Products
 import Incentives.Client.Stub (stubProductDetailsClient, stubUserDetailsClient)
 import qualified Incentives.ExampleCampaign as Examples
 import Incentives.ExampleData
+import Incentives.Eligibility (Eligibility (..))
+import qualified Incentives.Eligibility as Eligibility
 import Incentives.GrantedIncentive
 import Incentives.Interpreter (evaluate, contramapContext)
-import Incentives.Interpreter.Ast (interpretAst)
-import Incentives.Interpreter.Campaign (interpretCampaigns)
-import Incentives.Interpreter.Checkout (fullCheckoutInterpreter, checkoutLineInterpreters, checkoutPurchaseInterpreters)
+import Incentives.Interpreter.Ast (interpretAst, minimumWitness)
+import Incentives.Interpreter.Campaign (CampaignResult (..), interpretCampaigns)
+import Incentives.Interpreter.Checkout (fullCheckoutInterpreter, twoStageCheckoutInterpreter, checkoutLineInterpreters, checkoutPurchaseInterpreters)
 import Incentives.Interpreter.ProductCategoryIs (productCategoryIs)
-import Incentives.Interpreter.Rule (LineInterpreters (..), interpretLineRule, interpretPurchaseRule, interpretRule)
+import Incentives.Interpreter.Rule (LineInterpreters (..), EvaluatedRule (..), interpretLineRule, interpretPurchaseRule, interpretRule, ruleEligibility)
+import Incentives.Rule (LineRule (..))
 import Test.Hspec
 
 spec :: Spec
 spec = describe "Campaign interpretation" $ do
   it "evaluates the six existing campaigns with their correct recipients and attribution" $ do
     result <- evaluate (fullCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow) exampleCheckout
-      [ Examples.lineRulesLineIncentive
-      , Examples.purchaseRulesLineIncentive
-      , Examples.lineRulesPurchaseIncentive
-      , Examples.purchaseRulesPurchaseIncentive
-      , Examples.hybridCampaign
-      , Examples.bundleShippingIncentive
-      ]
-    result `shouldMatchList`
+      exampleCampaigns
+    attributedResults result `shouldMatchList`
       ( attributed Examples.lineRulesLineIncentive sellingGrants
           ++ attributed Examples.purchaseRulesLineIncentive buyerGrants
           -- The clothing line makes the universal condition false.
@@ -39,6 +38,18 @@ spec = describe "Campaign interpretation" $ do
           ++ attributed Examples.bundleShippingIncentive shippingGrants
       )
 
+  it "agrees with the full interpreter on grants and gate verdicts across all six campaigns" $ do
+    full <- evaluate (fullCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow)
+      exampleCheckout exampleCampaigns
+    staged <- evaluate (twoStageCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow)
+      exampleCheckout exampleCampaigns
+    let decisions result =
+          ( resultCampaignId result
+          , grantedIncentives result
+          , [(recipient, Eligibility.evaluate (ruleEligibility <$> tree)) | (recipient, tree) <- evaluatedConditions result]
+          )
+    map decisions staged `shouldBe` map decisions full
+
   it "accepts a separately supplied category interpreter inside both line quantifiers" $ do
     let products = Products.ProductDetailsClient
           { Products.fetch = \_ -> fail "The replacement category interpreter must not fetch products"
@@ -46,13 +57,42 @@ spec = describe "Campaign interpretation" $ do
           }
         lineInterpreters = (checkoutLineInterpreters products stubUserDetailsClient exampleNow)
           { category = contramapContext (const "books") productCategoryIs }
-        interpreter = interpretCampaigns (interpretAst (interpretRule
+        interpreter = interpretCampaigns (minimumWitness ruleEligibility <$> interpretAst (interpretRule
           (interpretLineRule lineInterpreters)
           (interpretPurchaseRule (checkoutPurchaseInterpreters stubUserDetailsClient exampleNow))))
     -- Treating clothing as books makes EveryLine succeed; AnyLine still uses
     -- the normal price interpreter and the original checkout line contexts.
     result <- evaluate interpreter exampleCheckout [Examples.lineRulesPurchaseIncentive]
-    result `shouldBe` attributed Examples.lineRulesPurchaseIncentive shippingGrants
+    attributedResults result `shouldBe` attributed Examples.lineRulesPurchaseIncentive
+      [PurchaseGrant (Reduce ShippingCost (PercentOff 50))]
+
+  it "returns the decisive evaluated line checks even when a purchase grant is rejected" $ do
+    result <- evaluate (fullCheckoutInterpreter stubProductDetailsClient stubUserDetailsClient exampleNow)
+      exampleCheckout [Examples.lineRulesPurchaseIncentive]
+    result `shouldBe`
+      [ CampaignResult (campaignId Examples.lineRulesPurchaseIncentive) []
+          [ (Nothing, Or
+              (Pure (EvaluatedLine clothingLineId (SellerAccountAgeGreaterThan (days 30)) NotEligible))
+              (Pure (EvaluatedLine clothingLineId (ProductCategoryIs "books") NotEligible)))
+          ]
+      ]
+
+exampleCampaigns :: [Campaign]
+exampleCampaigns =
+  [ Examples.lineRulesLineIncentive
+  , Examples.purchaseRulesLineIncentive
+  , Examples.lineRulesPurchaseIncentive
+  , Examples.purchaseRulesPurchaseIncentive
+  , Examples.hybridCampaign
+  , Examples.bundleShippingIncentive
+  ]
+
+attributedResults :: [CampaignResult] -> [(CampaignId, GrantedIncentive)]
+attributedResults results =
+  [ (resultCampaignId result, incentive)
+  | result <- results
+  , incentive <- grantedIncentives result
+  ]
 
 attributed :: Campaign -> [GrantedIncentive] -> [(CampaignId, GrantedIncentive)]
 attributed campaign = map (\instruction -> (campaignId campaign, instruction))

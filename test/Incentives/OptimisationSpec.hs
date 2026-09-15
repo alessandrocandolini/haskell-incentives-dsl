@@ -18,16 +18,24 @@ import Incentives.CheckoutSummary (Currency (..), LineId (..), ProductId (..), U
 import qualified Incentives.Client.ProductDetails as Products
 import qualified Incentives.Client.UserDetails as Users
 import Incentives.ExampleData (exampleNow, campaignStartsAt, campaignEndsAt)
+import Incentives.Eligibility (Eligibility (..))
 import Incentives.GrantedIncentive
 import Incentives.Rule
 import Incentives.Interpreter (evaluate)
-import Incentives.Interpreter.Checkout (fullCheckoutInterpreter)
+import Incentives.Interpreter.Campaign (CampaignResult (..))
+import Incentives.Interpreter.Checkout (twoStageCheckoutInterpreter)
+import Incentives.Interpreter.Rule (EvaluatedRule (..))
 import Test.Hspec
 
--- These are intentionally RED acceptance tests. The runner currently evaluates
--- fully; the clients require pruning and batching before returning any facts.
+-- Pruning has its own acceptance tests. The shared-batching test remains RED
+-- until surviving requests can be collected across campaigns and checkout lines.
 spec :: Spec
-spec = describe "Two-stage campaign optimisation" $ do
+spec = do
+  describe "Pruning without batching" pruningSpec
+  describe "Pruning and shared batching" batchingSpec
+
+batchingSpec :: Spec
+batchingSpec =
   it "prunes and batches across two campaigns, five lines, three sellers and one buyer" $ do
     -- First campaign needs products 1/2/3; second needs 2/4 after the pure pass.
     -- Product 5 and seller 3 must never be fetched. Buyer and seller facts share
@@ -35,8 +43,8 @@ spec = describe "Two-stage campaign optimisation" $ do
     (products, users, assertRequests) <- strictClients
       (Set.fromList [product1, product2, product3, product4])
       (Set.fromList [buyer, seller1, seller2])
-    result <- evaluate (fullCheckoutInterpreter products users exampleNow) checkout [bookCampaign, boostingCampaign]
-    result `shouldMatchList`
+    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) checkout [bookCampaign, boostingCampaign]
+    attributedResults result `shouldMatchList`
       [ (campaignId bookCampaign, LineGrant line1 (Waive SellingFee))
       , (campaignId boostingCampaign, LineGrant line1 (Waive BoostingFee))
       , (campaignId boostingCampaign, LineGrant line3 (Waive BoostingFee))
@@ -44,25 +52,88 @@ spec = describe "Two-stage campaign optimisation" $ do
       ]
     assertRequests
 
+pruningSpec :: Spec
+pruningSpec = do
   it "makes no upstream requests when the pure currency gate rejects both campaigns" $ do
-    (products, users, assertRequests) <- strictClients Set.empty Set.empty
-    result <- evaluate (fullCheckoutInterpreter products users exampleNow) (checkout { Checkout.currency = GBP })
+    (products, users, assertNoRequests) <- unavailableClients
+    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) (inexpensiveCheckout { Checkout.currency = GBP })
       [bookCampaign, boostingCampaign]
-    result `shouldBe` []
-    assertRequests
+    map grantedIncentives result `shouldBe` [[], []]
+    map evaluatedConditions result `shouldBe` replicate 2
+      [ (Just ident, Pure (EvaluatedPurchase (CurrencyIs USD) NotEligible))
+      | ident <- [line1, line2, line3, line4, line5]
+      ]
+    assertNoRequests
 
   it "grants on a true pure Or branch without fetching its effectful sibling" $ do
-    (products, users, assertRequests) <- strictClients Set.empty Set.empty
-    let inexpensive = checkout
-          { Checkout.lines = fmap (\checkoutLine -> checkoutLine { Checkout.currentPrice = amount 5 })
-              (Checkout.lines checkout)
-          }
-    result <- evaluate (fullCheckoutInterpreter products users exampleNow) inexpensive [boostingCampaign]
-    result `shouldMatchList`
+    (products, users, assertNoRequests) <- unavailableClients
+    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) inexpensiveCheckout [boostingCampaign]
+    attributedResults result `shouldMatchList`
       [ (campaignId boostingCampaign, LineGrant ident (Waive BoostingFee))
       | ident <- [line1, line2, line3, line4, line5]
       ]
-    assertRequests
+    map evaluatedConditions result `shouldBe`
+      [ [ (Just ident, And
+            (Pure (EvaluatedLine ident (PriceLessThan (amount 10)) Eligible))
+            (Pure (EvaluatedPurchase (CurrencyIs USD) Eligible)))
+        | ident <- [line1, line2, line3, line4, line5]
+        ]
+      ]
+    assertNoRequests
+
+  it "prunes effectful branches inside quantified conditions and preserves negation" $ do
+    (products, users, assertNoRequests) <- unavailableClients
+    let existential = bookCampaign
+          { offering = when
+              (anyLine (line (ProductCategoryIs "books") .||. line (PriceLessThan (amount 10))))
+              (grant (Waive ShippingCost))
+          }
+        negatedUniversal = boostingCampaign
+          { offering = when
+              (Not (everyLine (line (ProductCategoryIs "books") .&&. line (PriceLessThan (amount 1)))))
+              (grant (Waive ShippingCost))
+          }
+    result <- evaluate (twoStageCheckoutInterpreter products users exampleNow) inexpensiveCheckout
+      [existential, negatedUniversal]
+    result `shouldBe`
+      [ CampaignResult (campaignId existential) [PurchaseGrant (Waive ShippingCost)]
+          [(Nothing, Pure (EvaluatedLine line1 (PriceLessThan (amount 10)) Eligible))]
+      , CampaignResult (campaignId negatedUniversal) [PurchaseGrant (Waive ShippingCost)]
+          [(Nothing, Not (Pure (EvaluatedLine line1 (PriceLessThan (amount 1)) NotEligible)))]
+      ]
+    assertNoRequests
+
+-- There is no successful client response here, even for a batch. Recording
+-- before throwing also catches an interpreter that swallows a client failure.
+unavailableClients
+  :: IO (Products.ProductDetailsClient IO, Users.UserDetailsClient IO, Expectation)
+unavailableClients = do
+  requests <- newIORef []
+  let unexpected request = do
+        atomicModifyIORef' requests (\previous -> (request : previous, ()))
+        fail ("Pure pruning must avoid every upstream request: " ++ show request)
+      products = Products.ProductDetailsClient
+        { Products.fetch = unexpected . ProductFetch
+        , Products.fetchBatch = unexpected . ProductBatch . NESet.toSet
+        }
+      users = Users.UserDetailsClient
+        { Users.fetch = unexpected . UserFetch
+        , Users.fetchBatch = unexpected . UserBatch . NESet.toSet
+        }
+  pure (products, users, readIORef requests `shouldReturn` [])
+
+inexpensiveCheckout :: Checkout.CheckoutSummary
+inexpensiveCheckout = checkout
+  { Checkout.lines = fmap (\checkoutLine -> checkoutLine { Checkout.currentPrice = amount 5 })
+      (Checkout.lines checkout)
+  }
+
+attributedResults :: [CampaignResult] -> [(CampaignId, GrantedIncentive)]
+attributedResults results =
+  [ (resultCampaignId result, incentive)
+  | result <- results
+  , incentive <- grantedIncentives result
+  ]
 
 bookCampaign :: Campaign
 bookCampaign = Campaign
